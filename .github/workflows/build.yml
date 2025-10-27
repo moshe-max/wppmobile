@@ -4,65 +4,51 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     env:
-      JAVA_VERSION: 17
-      NODE_VERSION: 20
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Decode release keystore (if secret exists)
+        run: |
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            mkdir -p android
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android/release-key.jks
+            echo "Keystore decoded successfully"
+          else
+            echo "No keystore secret provided, skipping..."
+          fi
+
+      - name: Set execute permission on gradlew
+        run: chmod +x ./android/gradlew
 
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: 21
 
-      - name: Install npx react-native-clean-project
-        run: npm install -g react-native-clean-project
-
-      - name: Clean project
-        run: npx react-native-clean-project clean-project-auto
-
-      - name: Install npm dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Patch missing native_modules.gradle
+      - name: Build Android release
         run: |
-          if [ ! -f node_modules/@react-native-community/cli-platform-android/native_modules.gradle ]; then
-            echo "Creating placeholder native_modules.gradle to avoid build errors"
-            mkdir -p node_modules/@react-native-community/cli-platform-android/
-            echo "// Placeholder for native_modules.gradle" > node_modules/@react-native-community/cli-platform-android/native_modules.gradle
-          fi
-
-      - name: Decode and write release keystore
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
-        run: |
-          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android/release-key.jks
-
-      - name: Make Gradle executable
-        run: chmod +x ./android/gradlew
-
-      - name: Build Release APK
-        working-directory: android
-        run: ./gradlew assembleRelease \
-          -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
-          -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
-          -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
-          -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEY_PASSWORD }}"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release.apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          ./android/gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=android/release-key.jks \
+            -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
+            -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
+            -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEY_PASSWORD }}"
