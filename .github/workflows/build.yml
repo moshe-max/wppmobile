@@ -8,7 +8,6 @@ on:
 
 jobs:
   build:
-    name: Build APK
     runs-on: ubuntu-latest
 
     env:
@@ -17,43 +16,40 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      # 1️⃣ Checkout repo
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      # 2️⃣ Setup Node.js
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 20
 
-      # 3️⃣ Decode and create release keystore
-      - name: Create release keystore
-        run: |
-          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android/release-key.jks
+    - name: Upgrade react-native-svg to compatible version
+      run: |
+        npm install react-native-svg@^14.8.0 --save
+        cat package.json | grep react-native-svg
 
-      # 4️⃣ Install npm dependencies
-      - name: Install npm dependencies
-        working-directory: .
-        run: npm install --legacy-peer-deps
+    - name: Install dependencies (legacy-peer-deps)
+      run: npm install --legacy-peer-deps
 
-      # 5️⃣ Make gradlew executable
-      - name: Make gradlew executable
-        run: chmod +x ./android/gradlew
+    - name: Decode Android signing key
+      run: |
+        echo ${{ secrets.RELEASE_KEYSTORE_BASE64 }} | base64 --decode > android/release-key.jks
 
-      # 6️⃣ Build the release APK
-      - name: Build Android APK
-        working-directory: ./android
-        run: |
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
-            -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
-            -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}"
+    - name: Make Gradle wrapper executable
+      run: chmod +x ./android/gradlew
 
-      # 7️⃣ Upload APK artifact
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: wppconnect-release-apk
-          path: ./android/app/build/outputs/apk/release/app-release.apk
+    - name: Assemble release APK
+      run: |
+        cd android
+        ./gradlew assembleRelease \
+          -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
+          -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
+          -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
+          -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEY_PASSWORD }}"
+
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: app-release.apk
+        path: android/app/build/outputs/apk/release/app-release.apk
