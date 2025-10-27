@@ -7,48 +7,52 @@ on:
   pull_request:
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
 
     env:
+      JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # 1️⃣ Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      # 2️⃣ Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      - name: Install dependencies
+      # 3️⃣ Install dependencies (legacy peer deps to avoid conflicts)
+      - name: Install NPM dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Decode release keystore (if secret exists)
+      # 4️⃣ Decode signing key from secret
+      - name: Setup signing key
+        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            mkdir -p android
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > android/release-key.jks
-            echo "Keystore decoded successfully"
-          else
-            echo "No keystore secret provided, skipping..."
-          fi
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/release-key.jks
 
-      - name: Set execute permission on gradlew
-        run: chmod +x ./android/gradlew
+      # 5️⃣ Make Gradle wrapper executable
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Build Android release
+      # 6️⃣ Build Android release
+      - name: Assemble Android Release
         run: |
-          ./android/gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=android/release-key.jks \
+          cd android
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=release-key.jks \
             -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
             -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
             -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEY_PASSWORD }}"
+
+      # 7️⃣ Upload APK as artifact
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: WPPConnect-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
