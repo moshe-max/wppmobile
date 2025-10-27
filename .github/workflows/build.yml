@@ -14,10 +14,11 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.8-9/x64
       JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.8-9/x64
 
     steps:
-      # Checkout repo
+      # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -27,21 +28,21 @@ jobs:
         with:
           node-version: 20
 
-      # Ensure npm uses latest version
+      # Upgrade npm
       - name: Upgrade npm
         run: npm install -g npm@latest
 
-      # Install dependencies safely (resolving peer conflicts)
-      - name: Install npm dependencies
+      # Install npm dependencies resolving peer conflicts
+      - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      # Optional: Fix specific React Native dependency conflict
+      # Fix specific React Native dependency conflict
       - name: Fix React Native SVG version
         run: |
           npm install react-native-svg@14.8.0 --legacy-peer-deps
           npm install react-native-qrcode-svg@6.3.15 --legacy-peer-deps
 
-      # Decode release keystore if secret exists
+      # Decode release keystore if provided
       - name: Decode release keystore
         if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
         run: |
@@ -52,7 +53,7 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Build Android release
+      # Build Android release APK
       - name: Build Android Release
         run: |
           cd android
