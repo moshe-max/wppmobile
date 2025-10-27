@@ -2,13 +2,12 @@ name: Build WPPConnect Mobile
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.8-9/x64
@@ -16,40 +15,47 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    # 1️⃣ Checkout the repository
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: Set up Node.js
+    # 2️⃣ Set up Node.js (for React Native)
+    - name: Setup Node.js
       uses: actions/setup-node@v3
       with:
         node-version: 20
+        cache: 'npm'
 
-    - name: Upgrade react-native-svg to compatible version
-      run: |
-        npm install react-native-svg@^14.8.0 --save
-        cat package.json | grep react-native-svg
-
-    - name: Install dependencies (legacy-peer-deps)
+    # 3️⃣ Install dependencies (ignore peer deps to prevent conflicts)
+    - name: Install dependencies
       run: npm install --legacy-peer-deps
 
-    - name: Decode Android signing key
-      run: |
-        echo ${{ secrets.RELEASE_KEYSTORE_BASE64 }} | base64 --decode > android/release-key.jks
-
-    - name: Make Gradle wrapper executable
+    # 4️⃣ Ensure gradlew is executable
+    - name: Make gradlew executable
       run: chmod +x ./android/gradlew
 
-    - name: Assemble release APK
+    # 5️⃣ Decode and save keystore from secret
+    - name: Setup release keystore
+      run: |
+        echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/release-key.jks
+
+    # 6️⃣ Build the Android release APK
+    - name: Build APK
       run: |
         cd android
         ./gradlew assembleRelease \
           -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
-          -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
-          -Pandroid.injected.signing.key.alias="${{ secrets.RELEASE_KEY_ALIAS }}" \
-          -Pandroid.injected.signing.key.password="${{ secrets.RELEASE_KEY_PASSWORD }}"
+          -Pandroid.injected.signing.store.password="$RELEASE_KEYSTORE_PASSWORD" \
+          -Pandroid.injected.signing.key.alias="$RELEASE_KEY_ALIAS" \
+          -Pandroid.injected.signing.key.password="$RELEASE_KEY_PASSWORD"
+      env:
+        RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v3
+    # 7️⃣ Upload the release APK as artifact
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
       with:
-        name: app-release.apk
+        name: wppconnect-mobile-release
         path: android/app/build/outputs/apk/release/app-release.apk
