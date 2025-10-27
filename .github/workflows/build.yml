@@ -21,15 +21,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Setup Node
+      # Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      # Install dependencies
+      # Ensure npm uses latest version
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      # Install dependencies safely (resolving peer conflicts)
       - name: Install npm dependencies
         run: npm install --legacy-peer-deps
+
+      # Optional: Fix specific React Native dependency conflict
+      - name: Fix React Native SVG version
+        run: |
+          npm install react-native-svg@14.8.0 --legacy-peer-deps
+          npm install react-native-qrcode-svg@6.3.15 --legacy-peer-deps
 
       # Decode release keystore if secret exists
       - name: Decode release keystore
@@ -46,6 +56,7 @@ jobs:
       - name: Build Android Release
         run: |
           cd android
+          ./gradlew clean
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
             -Pandroid.injected.signing.store.password="${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" \
