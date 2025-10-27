@@ -2,156 +2,157 @@ name: Build WPPConnect Mobile
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
+
     env:
       NODE_VERSION: "20"
-      # Use Java 17 (compatible with Gradle 7.x used by many RN projects)
+      # Use Java 17 for Gradle 7.x compatibility
       JAVA_VERSION: "17"
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME: /usr/local/lib/android/sdk
-      # increase Node heap for bundling if needed
       NODE_OPTIONS: "--max_old_space_size=4096"
 
     steps:
-    #### 1) Checkout
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      # 1) Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    #### 2) Node.js (with optional caching)
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
+      # 2) Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-    - name: Cache npm
-      uses: actions/cache@v4
-      with:
-        path: ~/.npm
-        key: node-modules-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          node-modules-${{ runner.os }}-
+      # 3) Cache npm (safe key, no complex globs)
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-    #### 3) Install project dependencies (deterministic when lockfile exists)
-    - name: Install npm dependencies
-      shell: bash
-      run: |
-        if [ -f package-lock.json ]; then
-          echo "package-lock.json found -> running npm ci (deterministic)"
-          npm ci --legacy-peer-deps
-        else
-          echo "No package-lock.json -> running npm install (legacy-peer-deps)"
-          npm install --legacy-peer-deps
-        fi
+      # 4) Install dependencies (deterministic when lockfile exists)
+      - name: Install npm dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json found -> running npm ci (deterministic)"
+            npm ci --legacy-peer-deps
+          else
+            echo "No package-lock.json -> running npm install (legacy-peer-deps)"
+            npm install --legacy-peer-deps
+          fi
 
-    #### 4) Apply targeted fixes for known RN peer conflicts (no package.json overwrite)
-    - name: Ensure compatible RN SVG & QR code libs (no-save)
-      shell: bash
-      run: |
-        # install compatible runtime versions into node_modules without modifying package.json
-        npm install react-native-svg@^14.8.0 --no-save --legacy-peer-deps || true
-        npm install react-native-qrcode-svg@^6.3.15 --no-save --legacy-peer-deps || true
+      # 5) Ensure compatible RN SVG & QR code libs inside node_modules (no-save)
+      - name: Ensure compatible RN SVG & QR code libs
+        shell: bash
+        run: |
+          # install into node_modules to satisfy peer-deps at runtime without changing package.json
+          npm install react-native-svg@^14.8.0 --no-save --legacy-peer-deps || true
+          npm install react-native-qrcode-svg@^6.3.15 --no-save --legacy-peer-deps || true
 
-    #### 5) Set up Java 17 (prevents Unsupported class file major version 65)
-    - name: Setup Java 17
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: ${{ env.JAVA_VERSION }}
+      # 6) Setup Java 17
+      - name: Setup Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
 
-    #### 6) (Optional) Ensure required Android SDK parts — this uses the hosted SDK manager
-    - name: Ensure Android SDK packages
-      shell: bash
-      run: |
-        set -e
-        # sdkmanager path may vary by image; try common path
-        if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-        elif [ -x "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" ]; then
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
-        else
-          echo "sdkmanager not found in expected locations; skipping explicit SDK package install"
-          SDKMANAGER=""
-        fi
+      # 7) (Optional) Ensure basic Android SDK packages exist (best-effort)
+      - name: Ensure Android SDK packages (best-effort)
+        shell: bash
+        run: |
+          set -e
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [ -x "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          else
+            SDKMANAGER=""
+          fi
+          if [ -n "$SDKMANAGER" ]; then
+            yes | $SDKMANAGER "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null || true
+          fi
 
-        if [ -n "$SDKMANAGER" ]; then
-          yes | $SDKMANAGER "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null || true
-        fi
-
-    #### 7) Decode keystore (safely) — secret passed via env inside step, checked by shell
-    - name: Decode release keystore (safe)
-      shell: bash
-      env:
-        RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-        RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-      run: |
-        set -e
-        if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-          mkdir -p android
-          echo "Decoding release keystore into android/release-key.jks"
-          echo "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > android/release-key.jks
-          chmod 600 android/release-key.jks
-          # create android/key.properties (common pattern) to help Gradle find the key if your build reads it
-          cat > android/key.properties <<EOF
+      # 8) Decode keystore (safe check inside script; do NOT use secrets directly in an `if:` expression)
+      - name: Decode release keystore (if provided)
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
+            echo "Decoding keystore into android/release-key.jks"
+            mkdir -p android
+            echo "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > android/release-key.jks
+            chmod 600 android/release-key.jks
+            # create key.properties to help Gradle if your app reads it
+            cat > android/key.properties <<EOF
 storeFile=release-key.jks
 storePassword=${RELEASE_KEYSTORE_PASSWORD:-}
 keyAlias=${RELEASE_KEY_ALIAS:-}
 keyPassword=${RELEASE_KEY_PASSWORD:-}
 EOF
-        else
-          echo "No RELEASE_KEYSTORE_BASE64 secret found — will build unsigned APK as fallback"
-        fi
+          else
+            echo "No RELEASE_KEYSTORE_BASE64 secret found; build will proceed and produce unsigned APK."
+          fi
 
-    #### 8) Make gradlew executable
-    - name: Make gradlew executable
-      shell: bash
-      run: chmod +x android/gradlew
+      # 9) Make gradlew executable
+      - name: Make gradlew executable
+        shell: bash
+        run: chmod +x android/gradlew
 
-    #### 9) Cache Gradle to speed up subsequent runs
-    - name: Cache Gradle
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: gradle-cache-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
-        restore-keys: gradle-cache-${{ runner.os }}-
+      # 10) Cache Gradle files for speed (safe key)
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cache-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-cache-${{ runner.os }}-
 
-    #### 10) Build — run inside android/ and choose signed/unsigned automatically
-    - name: Build Release APK
-      shell: bash
-      working-directory: android
-      env:
-        RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-      run: |
-        set -euo pipefail
-        echo "Running Gradle build from: $(pwd)"
-        ./gradlew clean
-        if [ -f release-key.jks ]; then
-          echo "Release keystore present — building signed release..."
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
-            -Pandroid.injected.signing.store.password="${RELEASE_KEYSTORE_PASSWORD}" \
-            -Pandroid.injected.signing.key.alias="${RELEASE_KEY_ALIAS}" \
-            -Pandroid.injected.signing.key.password="${RELEASE_KEY_PASSWORD}"
-        else
-          echo "No keystore — building release (may be unsigned) to allow CI verification"
-          ./gradlew assembleRelease
-        fi
+      # 11) Build: run from android/; auto choose signed vs unsigned depending on keystore presence
+      - name: Build Release APK
+        shell: bash
+        working-directory: android
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "Current dir: $(pwd)"
+          ./gradlew clean
+          if [ -f release-key.jks ]; then
+            echo "Found release-key.jks — building signed release"
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file=$PWD/release-key.jks \
+              -Pandroid.injected.signing.store.password="${RELEASE_KEYSTORE_PASSWORD}" \
+              -Pandroid.injected.signing.key.alias="${RELEASE_KEY_ALIAS}" \
+              -Pandroid.injected.signing.key.password="${RELEASE_KEY_PASSWORD}"
+          else
+            echo "No release-key.jks — building release (may be unsigned) to allow CI verification"
+            ./gradlew assembleRelease
+          fi
 
-    #### 11) Upload produced APK(s)
-    - name: Upload APK artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: wppconnect-release-apks
-        path: android/app/build/outputs/apk/**/release/*.apk
+      # 12) Upload any produced APKs (artifact path uses simple glob)
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wppconnect-release-apks
+          path: android/app/build/outputs/apk/*/release/*.apk
